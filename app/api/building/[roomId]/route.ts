@@ -30,9 +30,9 @@ function getOrCreateRoom(roomId: string) {
 // Process client connection for SSE
 export async function GET(
   req: NextRequest,
-  { params }: { params: { roomId: string } }
+  { params }: { params: Promise<{ roomId: string }> }
 ) {
-  const roomId = params.roomId;
+  const { roomId } = await params;
   console.log(`New client connecting to room: ${roomId}`);
   
   // Ensure content type for SSE
@@ -78,9 +78,9 @@ export async function GET(
 // Process block updates
 export async function POST(
   req: NextRequest,
-  { params }: { params: { roomId: string } }
+  { params }: { params: Promise<{ roomId: string }> }
 ) {
-  const roomId = params.roomId;
+  const { roomId } = await params;
   
   try {
     const data = await req.json();

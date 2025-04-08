@@ -3,7 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { BLOCK_ARRAY, BLOCK_TYPES, IBlockDefinition } from "../utils/blockDefinitions";
+import {
+  BLOCK_ARRAY,
+  BLOCK_TYPES,
+  IBlockDefinition,
+} from "../utils/blockDefinitions";
 import { createBlockMaterials } from "../utils/textureLoader";
 import TextureAtlasPreview from "./TextureAtlasPreview";
 import BlockDefinitionTool from "./BlockDefinitionTool";
@@ -36,9 +40,12 @@ function MinecraftBuilder() {
   const [blocks, setBlocks] = useState<IBlock[]>([]);
   const [selectedColor, setSelectedColor] = useState<string>("red");
   const [selectedBlockType, setSelectedBlockType] = useState<string>("grass");
-  const [blockMaterialsCache, setBlockMaterialsCache] = useState<{ [key: string]: THREE.MeshLambertMaterial[] }>({});
+  const [blockMaterialsCache, setBlockMaterialsCache] = useState<{
+    [key: string]: THREE.MeshLambertMaterial[];
+  }>({});
   const [showTextureAtlas, setShowTextureAtlas] = useState<boolean>(false);
-  const [showBlockDefinitionTool, setShowBlockDefinitionTool] = useState<boolean>(false);
+  const [showBlockDefinitionTool, setShowBlockDefinitionTool] =
+    useState<boolean>(false);
   const [customBlocks, setCustomBlocks] = useState<IBlockDefinition[]>([]);
   const [roomId, setRoomId] = useState<string>("");
   const [isCollaborative, setIsCollaborative] = useState<boolean>(false);
@@ -46,23 +53,26 @@ function MinecraftBuilder() {
   const [userName, setUserName] = useState<string>("");
   const sseClientRef = useRef<EventSource | null>(null);
   const syncingRef = useRef<boolean>(false);
-  
+
   const router = useRouter();
   const searchParams = useSearchParams();
-  
+
   // Get room ID from URL on initial load
   useEffect(() => {
     const roomParam = searchParams.get("room");
     if (roomParam) {
       setRoomId(roomParam);
       setIsCollaborative(true);
-      
+
       // Ask for user name if not set
       const storedUserName = localStorage.getItem("minecraft_builder_username");
       if (storedUserName) {
         setUserName(storedUserName);
       } else {
-        const name = prompt("Enter your name for collaborative building:", "Builder");
+        const name = prompt(
+          "Enter your name for collaborative building:",
+          "Builder"
+        );
         if (name) {
           setUserName(name);
           localStorage.setItem("minecraft_builder_username", name);
@@ -73,18 +83,18 @@ function MinecraftBuilder() {
       setRoomId(uuidv4().substring(0, 8));
     }
   }, [searchParams]);
-  
+
   // Connect to SSE when in collaborative mode
   useEffect(() => {
     if (!isCollaborative || !roomId) return;
-    
+
     console.log(`Connecting to room: ${roomId}`);
-    
+
     // Create SSE connection
     const sseUrl = `/api/building/${roomId}`;
     const eventSource = new EventSource(sseUrl);
     sseClientRef.current = eventSource;
-    
+
     // Handle incoming events
     eventSource.onmessage = (event) => {
       try {
@@ -95,11 +105,11 @@ function MinecraftBuilder() {
         console.error("Error parsing SSE message:", error);
       }
     };
-    
+
     eventSource.onopen = () => {
       console.log("SSE connection opened");
     };
-    
+
     eventSource.onerror = (error) => {
       console.error("SSE connection error:", error);
       // Attempt to reconnect after a delay
@@ -110,7 +120,7 @@ function MinecraftBuilder() {
         }
       }, 3000);
     };
-    
+
     return () => {
       if (sseClientRef.current) {
         sseClientRef.current.close();
@@ -118,17 +128,17 @@ function MinecraftBuilder() {
       }
     };
   }, [roomId, isCollaborative]);
-  
+
   // Handle SSE events
   function handleSseEvent(data: any) {
     syncingRef.current = true;
-    
+
     const scene = sceneRef.current;
     if (!scene) {
       syncingRef.current = false;
       return;
     }
-    
+
     switch (data.type) {
       case "init":
         // Load initial blocks
@@ -136,92 +146,95 @@ function MinecraftBuilder() {
           position: new THREE.Vector3(blockPos.x, blockPos.y, blockPos.z),
           color: blockPos.color,
           blockType: blockPos.blockType,
-          id: blockPos.id
+          id: blockPos.id,
         }));
-        
+
         // Clear existing blocks
-        blocks.forEach(block => {
+        blocks.forEach((block) => {
           const blockMesh = scene.children.find(
-            obj => obj.userData.id === block.id
+            (obj) => obj.userData.id === block.id
           ) as THREE.Mesh;
           if (blockMesh) scene.remove(blockMesh);
         });
-        
+
         // Add initial blocks
         initialBlocks.forEach((block: IBlock) => {
           addBlockToScene(block);
         });
-        
+
         setBlocks(initialBlocks);
         break;
-        
+
       case "add":
         // Skip if we're the sender to avoid duplicates
         if (data.sender === userName) {
           syncingRef.current = false;
           return;
         }
-        
+
         // Add a new block
         const newBlock = {
           position: new THREE.Vector3(data.block.x, data.block.y, data.block.z),
           color: data.block.color,
           blockType: data.block.blockType,
-          id: data.block.id
+          id: data.block.id,
         };
-        
+
         // Check if the block already exists
-        if (!blocks.some(b => b.id === newBlock.id)) {
+        if (!blocks.some((b) => b.id === newBlock.id)) {
           addBlockToScene(newBlock);
-          setBlocks(prev => [...prev, newBlock]);
+          setBlocks((prev) => [...prev, newBlock]);
         }
         break;
-        
+
       case "remove":
         // Skip if we're the sender
         if (data.sender === userName) {
           syncingRef.current = false;
           return;
         }
-        
+
         // Remove a block
         const blockToRemove = scene.children.find(
-          obj => obj.userData.id === data.blockId
+          (obj) => obj.userData.id === data.blockId
         ) as THREE.Mesh;
-        
+
         if (blockToRemove) {
           scene.remove(blockToRemove);
-          setBlocks(prev => prev.filter(b => b.id !== data.blockId));
+          setBlocks((prev) => prev.filter((b) => b.id !== data.blockId));
         }
         break;
-        
+
       case "clear":
         // Clear all blocks
-        blocks.forEach(block => {
+        blocks.forEach((block) => {
           const blockMesh = scene.children.find(
-            obj => obj.userData.id === block.id
+            (obj) => obj.userData.id === block.id
           ) as THREE.Mesh;
           if (blockMesh) scene.remove(blockMesh);
         });
-        
+
         setBlocks([]);
         break;
     }
-    
+
     syncingRef.current = false;
   }
-  
+
   // Add a block to the scene
   function addBlockToScene(block: IBlock) {
     const scene = sceneRef.current;
     if (!scene) return;
-    
+
     let blockMesh: THREE.Mesh;
-    
+
     if (block.blockType && blockMaterialsCache[block.blockType]) {
       // Create a textured block
       const blockGeometry = new THREE.BoxGeometry(1, 1, 1);
-      blockMesh = new THREE.Mesh(blockGeometry, blockMaterialsCache[block.blockType]);
+      blockMesh = new THREE.Mesh(
+        blockGeometry,
+        blockMaterialsCache[block.blockType]
+      );
     } else if (block.color) {
       // Create a colored block
       const blockGeometry = new THREE.BoxGeometry(1, 1, 1);
@@ -237,21 +250,21 @@ function MinecraftBuilder() {
       });
       blockMesh = new THREE.Mesh(blockGeometry, blockMaterial);
     }
-    
+
     blockMesh.position.copy(block.position);
-    blockMesh.userData = { 
-      isBlock: true, 
+    blockMesh.userData = {
+      isBlock: true,
       id: block.id,
-      blockType: block.blockType 
+      blockType: block.blockType,
     };
-    
+
     scene.add(blockMesh);
   }
-  
+
   // Send block update to the server
   async function sendBlockUpdate(action: string, data: any) {
     if (!isCollaborative || syncingRef.current) return;
-    
+
     try {
       await fetch(`/api/building/${roomId}`, {
         method: "POST",
@@ -261,44 +274,48 @@ function MinecraftBuilder() {
         body: JSON.stringify({
           action,
           ...data,
-          sender: userName
+          sender: userName,
         }),
       });
     } catch (error) {
       console.error("Error sending block update:", error);
     }
   }
-  
+
   // Start sharing this build
   function startSharing() {
     setIsCollaborative(true);
     setShowShareDialog(true);
-    
+
     // Ask for user name if not set
     if (!userName) {
-      const name = prompt("Enter your name for collaborative building:", "Builder");
+      const name = prompt(
+        "Enter your name for collaborative building:",
+        "Builder"
+      );
       if (name) {
         setUserName(name);
         localStorage.setItem("minecraft_builder_username", name);
       }
     }
-    
+
     // Update URL with room ID without refreshing page
     const url = new URL(window.location.href);
     url.searchParams.set("room", roomId);
     window.history.pushState({}, "", url.toString());
   }
-  
+
   // Copy share link to clipboard
   function copyShareLink() {
     const url = new URL(window.location.href);
     url.searchParams.set("room", roomId);
-    
-    navigator.clipboard.writeText(url.toString())
+
+    navigator.clipboard
+      .writeText(url.toString())
       .then(() => {
         alert("Share link copied to clipboard!");
       })
-      .catch(err => {
+      .catch((err) => {
         console.error("Failed to copy link: ", err);
         alert("Failed to copy link. Please try again.");
       });
@@ -326,26 +343,54 @@ function MinecraftBuilder() {
   useEffect(() => {
     async function preloadMaterials() {
       const cache: { [key: string]: THREE.MeshLambertMaterial[] } = {};
-      
+
       // Load materials for each block type
       for (const blockType of BLOCK_ARRAY) {
         const materials = await createBlockMaterials(blockType.faces);
         cache[blockType.id] = materials;
       }
-      
+
       setBlockMaterialsCache(cache);
+
+      // After all materials are loaded, check if we need to rerender any blocks
+      // that were initially rendered as red fallbacks due to missing textures
+      const scene = sceneRef.current;
+      if (!scene) return;
+
+      // Go through all blocks in the scene and update any that have a blockType
+      blocks.forEach((block) => {
+        if (block.blockType && cache[block.blockType]) {
+          // Find the block mesh in the scene
+          const blockMesh = scene.children.find(
+            (obj) => obj.userData.id === block.id
+          ) as THREE.Mesh;
+
+          if (blockMesh && blockMesh.material) {
+            // Check if the block was rendered as a colored block (fallback)
+            const isColorBlock = Array.isArray(blockMesh.material) === false;
+
+            if (isColorBlock) {
+              // Replace the material with the correct textured material
+              blockMesh.material = cache[block.blockType];
+            }
+          }
+        }
+      });
     }
-    
+
     preloadMaterials();
-  }, []);
+  }, [blocks]);
 
   // Create a textured block mesh
-  function createBlockMesh(position: THREE.Vector3, blockType: string): THREE.Mesh {
+  function createBlockMesh(
+    position: THREE.Vector3,
+    blockType: string
+  ): THREE.Mesh {
     const blockGeometry = new THREE.BoxGeometry(1, 1, 1);
     const blockId = Date.now().toString();
-    
+
     let blockMesh: THREE.Mesh;
-    
+
     // If we have materials for this block type, use them
     if (blockMaterialsCache[blockType]) {
       blockMesh = new THREE.Mesh(blockGeometry, blockMaterialsCache[blockType]);
@@ -356,10 +401,10 @@ function MinecraftBuilder() {
       });
       blockMesh = new THREE.Mesh(blockGeometry, blockMaterial);
     }
-    
+
     blockMesh.position.copy(position);
     blockMesh.userData = { isBlock: true, id: blockId, blockType };
-    
+
     return blockMesh;
   }
 
@@ -367,7 +412,7 @@ function MinecraftBuilder() {
   function updatePreviewMaterial() {
     const previewBox = previewRef.current;
     if (!previewBox) return;
-    
+
     if (selectedBlockType && blockMaterialsCache[selectedBlockType]) {
       // Use the textured materials for the preview
       previewBox.material = blockMaterialsCache[selectedBlockType];
@@ -470,11 +515,14 @@ function MinecraftBuilder() {
 
     // Add wireframe to preview box
     const wireframeGeometry = new THREE.EdgesGeometry(previewGeometry);
-    const wireframeMaterial = new THREE.LineBasicMaterial({ 
+    const wireframeMaterial = new THREE.LineBasicMaterial({
       color: 0xffffff,
-      linewidth: 1
+      linewidth: 1,
     });
-    const wireframe = new THREE.LineSegments(wireframeGeometry, wireframeMaterial);
+    const wireframe = new THREE.LineSegments(
+      wireframeGeometry,
+      wireframeMaterial
+    );
     previewBox.add(wireframe);
     previewWireframeRef.current = wireframe;
 
@@ -653,18 +701,21 @@ function MinecraftBuilder() {
       if (blockExists) return;
 
       // Create a unique ID for the block
-      const blockId = Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9);
+      const blockId =
+        Date.now().toString() +
+        "-" +
+        Math.random().toString(36).substring(2, 9);
 
       // Create and add a new block (textured or colored based on selection)
       let block: THREE.Mesh;
-      
-      const newBlock: IBlock = { 
-        position, 
-        color: selectedBlockType ? undefined : selectedColor, 
+
+      const newBlock: IBlock = {
+        position,
+        color: selectedBlockType ? undefined : selectedColor,
         blockType: selectedBlockType,
-        id: blockId 
+        id: blockId,
       };
-      
+
       if (selectedBlockType && blockMaterialsCache[selectedBlockType]) {
         // Create a textured block
         block = createBlockMesh(position, selectedBlockType);
@@ -679,12 +730,12 @@ function MinecraftBuilder() {
         block.position.copy(position);
         block.userData = { isBlock: true, id: blockId };
       }
-      
+
       scene.add(block);
 
       // Update state
       setBlocks([...blocks, newBlock]);
-      
+
       // Send update if in collaborative mode
       if (isCollaborative) {
         const blockPosition: IBlockPosition = {
@@ -693,9 +744,9 @@ function MinecraftBuilder() {
           z: position.z,
           color: selectedBlockType ? undefined : selectedColor,
           blockType: selectedBlockType,
-          id: blockId
+          id: blockId,
         };
-        
+
         sendBlockUpdate("add", { block: blockPosition });
       }
     }
@@ -731,7 +782,7 @@ function MinecraftBuilder() {
 
         // Reset hover reference
         hoveredBlockRef.current = null;
-        
+
         // Send update if in collaborative mode
         if (isCollaborative && blockId) {
           sendBlockUpdate("remove", { blockId });
@@ -754,33 +805,39 @@ function MinecraftBuilder() {
       document.removeEventListener("contextmenu", handleContextMenu);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [blocks, selectedColor, selectedBlockType, blockMaterialsCache, isCollaborative]);
+  }, [
+    blocks,
+    selectedColor,
+    selectedBlockType,
+    blockMaterialsCache,
+    isCollaborative,
+  ]);
 
   // Handle saving a new block definition
   function handleSaveBlockDefinition(newBlock: IBlockDefinition) {
     // Add the new block to custom blocks
-    setCustomBlocks(prev => [...prev, newBlock]);
-    
+    setCustomBlocks((prev) => [...prev, newBlock]);
+
     // Close the block definition tool
     setShowBlockDefinitionTool(false);
-    
+
     // Set the new block type as selected
     setSelectedBlockType(newBlock.id);
-    
+
     // Reload block materials
     preloadBlockMaterials([newBlock]);
   }
-  
+
   // Preload materials for custom blocks
   async function preloadBlockMaterials(blocks: IBlockDefinition[]) {
     const cache = { ...blockMaterialsCache };
-    
+
     // Load materials for each block
     for (const block of blocks) {
       const materials = await createBlockMaterials(block.faces);
       cache[block.id] = materials;
     }
-    
+
     setBlockMaterialsCache(cache);
   }
 
@@ -790,31 +847,33 @@ function MinecraftBuilder() {
   return (
     <div className="relative w-full h-screen">
       <div ref={mountRef} className="w-full h-full" />
-      
+
       {/* Texture atlas preview */}
       {showTextureAtlas && (
         <div className="absolute top-4 right-4 z-10">
           <TextureAtlasPreview src="/textures.webp" />
         </div>
       )}
-      
+
       {/* Block definition tool */}
       {showBlockDefinitionTool && (
-        <BlockDefinitionTool 
+        <BlockDefinitionTool
           onClose={() => setShowBlockDefinitionTool(false)}
           onSave={handleSaveBlockDefinition}
         />
       )}
-      
+
       {/* Share dialog */}
       {showShareDialog && (
         <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-slate-800 p-6 rounded-lg shadow-lg z-50">
           <h3 className="text-white font-medium mb-4">Share Your Build</h3>
-          <p className="text-slate-300 mb-4">Send this link to your friends to build together:</p>
-          
+          <p className="text-slate-300 mb-4">
+            Send this link to your friends to build together:
+          </p>
+
           <div className="flex mb-4">
-            <input 
-              type="text" 
+            <input
+              type="text"
               value={`${window.location.origin}?room=${roomId}`}
               readOnly
               className="flex-grow px-3 py-2 bg-slate-700 text-white rounded-l"
@@ -826,7 +885,7 @@ function MinecraftBuilder() {
               Copy
             </button>
           </div>
-          
+
           <div className="flex justify-end">
             <button
               onClick={() => setShowShareDialog(false)}
@@ -837,7 +896,7 @@ function MinecraftBuilder() {
           </div>
         </div>
       )}
-      
+
       {/* Controls */}
       <div className="absolute top-4 left-4 flex space-x-2 flex-wrap gap-2">
         <button
@@ -846,14 +905,14 @@ function MinecraftBuilder() {
         >
           {showTextureAtlas ? "Hide" : "Show"} Texture Atlas
         </button>
-        
+
         <button
           className="px-3 py-1 bg-slate-700 text-white rounded-md hover:bg-slate-600 text-sm"
           onClick={() => setShowBlockDefinitionTool(true)}
         >
           Create New Block
         </button>
-        
+
         {!isCollaborative ? (
           <button
             className="px-3 py-1 bg-green-600 text-white rounded-md hover:bg-green-700 text-sm"
@@ -869,26 +928,31 @@ function MinecraftBuilder() {
             Copy Share Link
           </button>
         )}
-        
+
         <div className="px-3 py-1 bg-slate-700 text-white rounded-md text-sm">
           Right-click: Place block • Z key: Delete block
         </div>
-        
+
         {isCollaborative && (
           <div className="px-3 py-1 bg-purple-600 text-white rounded-md text-sm">
             Room: {roomId} • {blocks.length} blocks
           </div>
         )}
       </div>
-      
+
       {/* Block selection UI */}
       <div className="absolute bottom-4 left-0 right-0 flex flex-col items-center">
         <div className="mb-2 bg-slate-800 bg-opacity-70 text-white px-3 py-1 rounded-md text-sm">
-          {selectedBlockType 
-            ? (BLOCK_TYPES[selectedBlockType.toUpperCase()] || customBlocks.find(b => b.id === selectedBlockType))?.name || "Custom Block"
-            : `${selectedColor.charAt(0).toUpperCase()}${selectedColor.slice(1)} Block`}
+          {selectedBlockType
+            ? (
+                BLOCK_TYPES[selectedBlockType.toUpperCase()] ||
+                customBlocks.find((b) => b.id === selectedBlockType)
+              )?.name || "Custom Block"
+            : `${selectedColor.charAt(0).toUpperCase()}${selectedColor.slice(
+                1
+              )} Block`}
         </div>
-        
+
         <div className="flex justify-center">
           {/* Color options */}
           <div className="flex space-x-2 mr-4 bg-slate-800 bg-opacity-70 p-2 rounded-lg">
@@ -897,7 +961,7 @@ function MinecraftBuilder() {
               <button
                 key={option.value}
                 className={`w-10 h-10 rounded-lg transition-all transform ${
-                  selectedBlockType === "" && selectedColor === option.value 
+                  selectedBlockType === "" && selectedColor === option.value
                     ? "ring-2 ring-white scale-110"
                     : "hover:scale-105"
                 }`}
@@ -910,7 +974,7 @@ function MinecraftBuilder() {
               />
             ))}
           </div>
-          
+
           {/* Block type options */}
           <div className="flex space-x-2 bg-slate-800 bg-opacity-70 p-2 rounded-lg overflow-x-auto max-w-[60vw]">
             <div className="text-white text-xs mr-2 self-center">Blocks:</div>
@@ -920,15 +984,19 @@ function MinecraftBuilder() {
               const texturesPerRow = 64; // Use 64 textures per row (1024/16)
               const row = Math.floor(textureIndex / texturesPerRow);
               const col = textureIndex % texturesPerRow;
-              
+
               return (
                 <button
                   key={blockType.id}
                   className={`w-10 h-10 rounded-lg border border-gray-600 transition-all transform overflow-hidden flex items-center justify-center ${
-                    selectedBlockType === blockType.id 
-                      ? "ring-2 ring-white scale-110" 
+                    selectedBlockType === blockType.id
+                      ? "ring-2 ring-white scale-110"
                       : "hover:scale-105"
-                  } ${customBlocks.some(b => b.id === blockType.id) ? "ring-1 ring-yellow-500" : ""}`}
+                  } ${
+                    customBlocks.some((b) => b.id === blockType.id)
+                      ? "ring-1 ring-yellow-500"
+                      : ""
+                  }`}
                   onClick={() => setSelectedBlockType(blockType.id)}
                   title={blockType.name}
                 >
@@ -938,15 +1006,17 @@ function MinecraftBuilder() {
                       height: "40px", // 2.4x the texture size (16px)
                       backgroundImage: `url('/textures.webp')`,
                       backgroundSize: `${64 * 16 * 2.4}px`, // 2.4x scaling
-                      backgroundPosition: `-${col * 16 * 2.4}px -${row * 16 * 2.4}px`,
+                      backgroundPosition: `-${col * 16 * 2.4}px -${
+                        row * 16 * 2.4
+                      }px`,
                       backgroundRepeat: "no-repeat",
-                      imageRendering: "pixelated"
+                      imageRendering: "pixelated",
                     }}
                   />
                 </button>
               );
             })}
-            
+
             {/* Add new block button */}
             <button
               className="w-10 h-10 rounded-lg border-2 border-dashed border-gray-500 flex items-center justify-center hover:border-white transition-colors"
