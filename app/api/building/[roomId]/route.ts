@@ -9,11 +9,19 @@ interface IBlockPosition {
   id: string;
 }
 
+interface IPlayerPosition {
+  x: number;
+  y: number;
+  z: number;
+  name: string;
+}
+
 // In-memory store for rooms and their blocks
 // For a production app, you would use a database or Redis
 const rooms: Map<string, {
   blocks: IBlockPosition[];
   clients: Set<ReadableStreamDefaultController>;
+  players: Map<string, IPlayerPosition>; // Track connected players by name
 }> = new Map();
 
 // Helper to get or create a room
@@ -21,7 +29,8 @@ function getOrCreateRoom(roomId: string) {
   if (!rooms.has(roomId)) {
     rooms.set(roomId, {
       blocks: [],
-      clients: new Set()
+      clients: new Set(),
+      players: new Map()
     });
   }
   return rooms.get(roomId)!;
@@ -33,7 +42,9 @@ export async function GET(
   { params }: { params: Promise<{ roomId: string }> }
 ) {
   const { roomId } = await params;
-  console.log(`New client connecting to room: ${roomId}`);
+  // Get player name from query string
+  const playerName = req.nextUrl.searchParams.get('name') || 'Anonymous';
+  console.log(`New client connecting to room: ${roomId}, player: ${playerName}`);
   
   // Ensure content type for SSE
   const responseHeaders = {
@@ -44,7 +55,25 @@ export async function GET(
   
   // Create a room if it doesn't exist
   const room = getOrCreateRoom(roomId);
-  console.log(`Room ${roomId} has ${room.blocks.length} blocks and ${room.clients.size} clients`);
+  
+  // Add player to the room
+  if (!room.players.has(playerName)) {
+    room.players.set(playerName, {
+      x: 0,
+      y: 0,
+      z: 0,
+      name: playerName
+    });
+    
+    // Notify other clients about new player
+    broadcastToRoom(roomId, {
+      type: "player_joined",
+      name: playerName,
+      playerCount: room.players.size
+    });
+  }
+  
+  console.log(`Room ${roomId} has ${room.blocks.length} blocks and ${room.players.size} players`);
   
   // Create a streaming response
   const stream = new ReadableStream({
@@ -52,12 +81,13 @@ export async function GET(
       // Send initial data
       const initialData = JSON.stringify({
         type: "init",
-        blocks: room.blocks
+        blocks: room.blocks,
+        players: Array.from(room.players.values())
       });
       
       const encodedData = new TextEncoder().encode(`data: ${initialData}\n\n`);
       controller.enqueue(encodedData);
-      console.log(`Sent initial data with ${room.blocks.length} blocks`);
+      console.log(`Sent initial data with ${room.blocks.length} blocks and ${room.players.size} players`);
       
       // Add client to the room
       room.clients.add(controller);
@@ -65,7 +95,16 @@ export async function GET(
       // Remove client when connection closes
       req.signal.addEventListener("abort", () => {
         room.clients.delete(controller);
-        console.log(`Client disconnected from room ${roomId}, ${room.clients.size} clients remaining`);
+        room.players.delete(playerName);
+        
+        console.log(`Client disconnected from room ${roomId}, ${room.players.size} players remaining`);
+        
+        // Notify other clients about player leaving
+        broadcastToRoom(roomId, {
+          type: "player_left",
+          name: playerName,
+          playerCount: room.players.size
+        });
       });
     }
   });
@@ -120,6 +159,24 @@ export async function POST(
         broadcastToRoom(roomId, {
           type: "clear"
         });
+        break;
+        
+      case "update_position":
+        // Update player preview position
+        if (data.sender && data.position) {
+          if (room.players.has(data.sender)) {
+            const player = room.players.get(data.sender)!;
+            player.x = data.position.x;
+            player.y = data.position.y;
+            player.z = data.position.z;
+            
+            broadcastToRoom(roomId, {
+              type: "player_moved",
+              name: data.sender,
+              position: data.position
+            });
+          }
+        }
         break;
         
       default:

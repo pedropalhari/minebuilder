@@ -13,6 +13,8 @@ import TextureAtlasPreview from "./TextureAtlasPreview";
 import BlockDefinitionTool from "./BlockDefinitionTool";
 import { useRouter, useSearchParams } from "next/navigation";
 import { v4 as uuidv4 } from "uuid";
+import { TextGeometry } from "three/examples/jsm/geometries/TextGeometry.js";
+import { FontLoader, Font } from "three/examples/jsm/loaders/FontLoader.js";
 
 interface IBlock {
   position: THREE.Vector3;
@@ -35,6 +37,13 @@ interface IColorOption {
   value: string;
 }
 
+interface IPlayer {
+  name: string;
+  x: number;
+  y: number;
+  z: number;
+}
+
 function MinecraftBuilder() {
   const mountRef = useRef<HTMLDivElement>(null);
   const [blocks, setBlocks] = useState<IBlock[]>([]);
@@ -51,8 +60,20 @@ function MinecraftBuilder() {
   const [isCollaborative, setIsCollaborative] = useState<boolean>(false);
   const [showShareDialog, setShowShareDialog] = useState<boolean>(false);
   const [userName, setUserName] = useState<string>("");
+  const [connectedPlayers, setConnectedPlayers] = useState<IPlayer[]>([]);
+  const [showPlayersList, setShowPlayersList] = useState<boolean>(false);
   const sseClientRef = useRef<EventSource | null>(null);
   const syncingRef = useRef<boolean>(false);
+  const playerWireframesRef = useRef<Map<string, THREE.LineSegments>>(new Map());
+  // For WASD movement
+  const keysPressed = useRef<Set<string>>(new Set());
+  const moveSpeedRef = useRef<number>(0.2);
+  const playerPositionRef = useRef<THREE.Vector3>(new THREE.Vector3());
+  const lastReportedPositionRef = useRef<THREE.Vector3>(new THREE.Vector3());
+  const positionReportIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const [font, setFont] = useState<Font | null>(null);
+  const playerLabelsRef = useRef<Map<string, HTMLDivElement>>(new Map());
+  const labelContainerRef = useRef<HTMLDivElement | null>(null);
 
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -86,12 +107,12 @@ function MinecraftBuilder() {
 
   // Connect to SSE when in collaborative mode
   useEffect(() => {
-    if (!isCollaborative || !roomId) return;
+    if (!isCollaborative || !roomId || !userName) return;
 
-    console.log(`Connecting to room: ${roomId}`);
+    console.log(`Connecting to room: ${roomId} as ${userName}`);
 
     // Create SSE connection
-    const sseUrl = `/api/building/${roomId}`;
+    const sseUrl = `/api/building/${roomId}?name=${encodeURIComponent(userName)}`;
     const eventSource = new EventSource(sseUrl);
     sseClientRef.current = eventSource;
 
@@ -121,13 +142,53 @@ function MinecraftBuilder() {
       }, 3000);
     };
 
+    // Start position reporting interval
+    if (positionReportIntervalRef.current === null) {
+      positionReportIntervalRef.current = setInterval(() => {
+        if (!previewRef.current || !previewRef.current.visible) return;
+        
+        const currentPos = previewRef.current.position;
+        const lastPos = lastReportedPositionRef.current;
+        
+        // Only report if position changed
+        if (
+          Math.abs(currentPos.x - lastPos.x) > 0.01 ||
+          Math.abs(currentPos.y - lastPos.y) > 0.01 ||
+          Math.abs(currentPos.z - lastPos.z) > 0.1
+        ) {
+          sendBlockUpdate("update_position", { 
+            position: {
+              x: currentPos.x,
+              y: currentPos.y,
+              z: currentPos.z
+            }
+          });
+          
+          lastReportedPositionRef.current.copy(currentPos);
+        }
+      }, 100); // Report position every 100ms if changed
+    }
+
     return () => {
       if (sseClientRef.current) {
         sseClientRef.current.close();
         sseClientRef.current = null;
       }
+      
+      if (positionReportIntervalRef.current) {
+        clearInterval(positionReportIntervalRef.current);
+        positionReportIntervalRef.current = null;
+      }
     };
-  }, [roomId, isCollaborative]);
+  }, [roomId, isCollaborative, userName]);
+
+  // Load font for player labels (optional for HTML labels)
+  useEffect(() => {
+    const loader = new FontLoader();
+    loader.load('/fonts/helvetiker_regular.typeface.json', (loadedFont) => {
+      setFont(loadedFont);
+    });
+  }, []);
 
   // Handle SSE events
   function handleSseEvent(data: any) {
@@ -163,6 +224,24 @@ function MinecraftBuilder() {
         });
 
         setBlocks(initialBlocks);
+        
+        // Setup connected players
+        if (data.players) {
+          setConnectedPlayers(data.players.filter((p: IPlayer) => p.name !== userName));
+          
+          // Remove any existing wireframes
+          playerWireframesRef.current.forEach((wireframe) => {
+            scene.remove(wireframe);
+          });
+          playerWireframesRef.current.clear();
+          
+          // Create wireframes for other players
+          data.players.forEach((player: IPlayer) => {
+            if (player.name !== userName) {
+              createPlayerWireframe(player);
+            }
+          });
+        }
         break;
 
       case "add":
@@ -216,9 +295,243 @@ function MinecraftBuilder() {
 
         setBlocks([]);
         break;
+        
+      case "player_joined":
+        if (data.name !== userName) {
+          // Add player to connected players list
+          setConnectedPlayers(prev => {
+            if (!prev.some(p => p.name === data.name)) {
+              const newPlayer = { name: data.name, x: 0, y: 0, z: 0 };
+              createPlayerWireframe(newPlayer);
+              return [...prev, newPlayer];
+            }
+            return prev;
+          });
+        }
+        break;
+        
+      case "player_left":
+        // Remove player from connected players list
+        setConnectedPlayers(prev => {
+          const players = prev.filter(p => p.name !== data.name);
+          
+          // Remove player wireframe and label
+          removePlayerWireframeAndLabel(data.name);
+          
+          return players;
+        });
+        break;
+        
+      case "player_moved":
+        if (data.name !== userName) {
+          // Update player position
+          setConnectedPlayers(prev => {
+            const updated = prev.map(p => {
+              if (p.name === data.name) {
+                return { 
+                  ...p, 
+                  x: data.position.x, 
+                  y: data.position.y, 
+                  z: data.position.z 
+                };
+              }
+              return p;
+            });
+            
+            // Update wireframe
+            if (playerWireframesRef.current.has(data.name)) {
+              const wireframe = playerWireframesRef.current.get(data.name)!;
+              wireframe.position.set(
+                data.position.x,
+                data.position.y,
+                data.position.z
+              );
+              wireframe.visible = true;
+            } else {
+              // Create wireframe if it doesn't exist
+              createPlayerWireframe({ 
+                name: data.name, 
+                x: data.position.x, 
+                y: data.position.y, 
+                z: data.position.z 
+              });
+            }
+            
+            return updated;
+          });
+        }
+        break;
     }
 
     syncingRef.current = false;
+  }
+  
+  // Create wireframe for a player
+  function createPlayerWireframe(player: IPlayer) {
+    const scene = sceneRef.current;
+    if (!scene) return;
+    
+    // Remove existing wireframe if present
+    if (playerWireframesRef.current.has(player.name)) {
+      const oldWireframe = playerWireframesRef.current.get(player.name)!;
+      scene.remove(oldWireframe);
+      playerWireframesRef.current.delete(player.name);
+    }
+    
+    // Create a slightly larger wireframe (1.01 vs 1.05)
+    const wireframeGeometry = new THREE.BoxGeometry(1.05, 1.05, 1.05);
+    const edges = new THREE.EdgesGeometry(wireframeGeometry);
+    
+    // Get a random color based on player name
+    const color = new THREE.Color().setHSL(
+      Math.abs(player.name.split('').reduce((a, b) => a + b.charCodeAt(0), 0) % 100) / 100,
+      0.8,
+      0.5
+    );
+    
+    const wireframeMaterial = new THREE.LineBasicMaterial({ 
+      color: color,
+      linewidth: 2,
+      transparent: true,
+      opacity: 0.8
+    });
+    
+    const wireframe = new THREE.LineSegments(edges, wireframeMaterial);
+    wireframe.position.set(player.x, player.y, player.z);
+    
+    // Add player name as user data
+    wireframe.userData = { playerName: player.name };
+    
+    scene.add(wireframe);
+    playerWireframesRef.current.set(player.name, wireframe);
+    
+    // Create HTML label for player name
+    createOrUpdatePlayerLabel(player.name, color);
+    
+    return wireframe;
+  }
+
+  // Create or update HTML label for player name
+  function createOrUpdatePlayerLabel(playerName: string, color: THREE.Color) {
+    // Make sure label container exists
+    if (!labelContainerRef.current) {
+      const container = document.createElement('div');
+      container.style.position = 'absolute';
+      container.style.top = '0';
+      container.style.left = '0';
+      container.style.pointerEvents = 'none';
+      container.style.width = '100%';
+      container.style.height = '100%';
+      container.style.overflow = 'hidden';
+      
+      if (mountRef.current) {
+        mountRef.current.appendChild(container);
+        labelContainerRef.current = container;
+      }
+    }
+    
+    // Create or get existing label
+    let label = playerLabelsRef.current.get(playerName);
+    if (!label) {
+      label = document.createElement('div');
+      label.style.position = 'absolute';
+      label.style.padding = '4px 8px';
+      label.style.borderRadius = '4px';
+      label.style.fontSize = '14px';
+      label.style.fontWeight = 'bold';
+      label.style.color = 'white';
+      label.style.textShadow = '1px 1px 3px rgba(0,0,0,1)';
+      label.style.userSelect = 'none';
+      label.style.pointerEvents = 'none';
+      label.style.display = 'flex';
+      label.style.alignItems = 'center';
+      label.style.justifyContent = 'center';
+      label.style.transition = 'opacity 0.2s';
+      label.style.opacity = '1.0';
+      label.style.backgroundColor = `rgba(${color.r * 255}, ${color.g * 255}, ${color.b * 255}, 0.8)`;
+      label.innerText = playerName;
+      
+      if (labelContainerRef.current) {
+        labelContainerRef.current.appendChild(label);
+        playerLabelsRef.current.set(playerName, label);
+      }
+    }
+    
+    return label;
+  }
+  
+  // Update player label positions
+  function updatePlayerLabels() {
+    if (!cameraRef.current || !rendererRef.current) return;
+    
+    const camera = cameraRef.current;
+    const renderer = rendererRef.current;
+    
+    playerWireframesRef.current.forEach((wireframe, playerName) => {
+      const label = playerLabelsRef.current.get(playerName);
+      if (!label) return;
+      
+      // Get the position above the player wireframe
+      const position = wireframe.position.clone();
+      position.y += 0.8; // Position above the wireframe
+      
+      // Project position to screen space
+      const vector = position.clone().project(camera);
+      
+      // Convert to CSS coordinates
+      const x = (vector.x * 0.5 + 0.5) * renderer.domElement.clientWidth;
+      const y = (-(vector.y * 0.5) + 0.5) * renderer.domElement.clientHeight;
+      
+      // Check if the label is in front of the camera
+      if (vector.z < 1) {
+        label.style.display = 'block';
+        label.style.transform = `translate(-50%, -50%) translate(${x}px, ${y}px)`;
+        
+        // Calculate distance for scaling
+        const distance = camera.position.distanceTo(wireframe.position);
+        const scale = Math.max(0.5, Math.min(1, 10 / distance));
+        label.style.transform += ` scale(${scale})`;
+        
+        // Fade out when far away but keep a minimum opacity
+        const opacity = Math.max(0.6, 1 - (distance / 40));
+        label.style.opacity = opacity.toString();
+      } else {
+        label.style.display = 'none'; // Hide when behind camera
+      }
+    });
+  }
+  
+  // Add animation loop for updating labels
+  useEffect(() => {
+    function animate() {
+      updatePlayerLabels();
+      requestAnimationFrame(animate);
+    }
+    
+    if (isCollaborative) {
+      const animationId = requestAnimationFrame(animate);
+      return () => cancelAnimationFrame(animationId);
+    }
+  }, [isCollaborative]);
+  
+  // Remove player wireframe and label
+  function removePlayerWireframeAndLabel(playerName: string) {
+    const scene = sceneRef.current;
+    if (!scene) return;
+    
+    // Remove wireframe
+    if (playerWireframesRef.current.has(playerName)) {
+      const wireframe = playerWireframesRef.current.get(playerName)!;
+      scene.remove(wireframe);
+      playerWireframesRef.current.delete(playerName);
+    }
+    
+    // Remove label
+    const label = playerLabelsRef.current.get(playerName);
+    if (label && labelContainerRef.current) {
+      labelContainerRef.current.removeChild(label);
+      playerLabelsRef.current.delete(playerName);
+    }
   }
 
   // Add a block to the scene
@@ -470,6 +783,7 @@ function MinecraftBuilder() {
       // RIGHT not defined - this disables it
     };
     controls.enableZoom = true; // Enable zoom with mouse wheel only
+    controls.keyPanSpeed = 0; // Disable default keyboard control
     controlsRef.current = controls;
 
     // Add ambient light
@@ -568,7 +882,105 @@ function MinecraftBuilder() {
     updatePreviewMaterial();
   }, [selectedBlockType, selectedColor, blockMaterialsCache]);
 
-  // Event handlers for mouse interactions
+  // Handle keyboard controls (WASD)
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (['w', 'a', 's', 'd', 'W', 'A', 'S', 'D', ' ', 'Shift'].includes(event.key)) {
+        event.preventDefault();
+        keysPressed.current.add(event.key.toLowerCase());
+      }
+    }
+
+    function handleKeyUp(event: KeyboardEvent) {
+      if (['w', 'a', 's', 'd', 'W', 'A', 'S', 'D', ' ', 'Shift'].includes(event.key)) {
+        event.preventDefault();
+        keysPressed.current.delete(event.key.toLowerCase());
+      }
+    }
+
+    // WASD movement system
+    function processMovement() {
+      if (!cameraRef.current || !controlsRef.current) return;
+      
+      const camera = cameraRef.current;
+      const controls = controlsRef.current;
+      
+      // Get camera direction vectors
+      const forward = new THREE.Vector3();
+      camera.getWorldDirection(forward);
+      forward.y = 0; // Keep movement on XZ plane
+      forward.normalize();
+      
+      const right = new THREE.Vector3();
+      right.crossVectors(camera.up, forward).normalize();
+      
+      // Calculate movement direction from keys
+      const moveDirection = new THREE.Vector3();
+      
+      if (keysPressed.current.has('w')) moveDirection.add(forward);
+      if (keysPressed.current.has('s')) moveDirection.sub(forward);
+      if (keysPressed.current.has('a')) moveDirection.sub(right);
+      if (keysPressed.current.has('d')) moveDirection.add(right);
+      
+      // Apply speed modifiers
+      let speedMultiplier = 1;
+      if (keysPressed.current.has('shift')) speedMultiplier = 2; // Sprint
+      
+      // Move if there's any input
+      if (moveDirection.length() > 0) {
+        moveDirection.normalize();
+        
+        // Move the camera target
+        const targetPosition = controls.target.clone();
+        targetPosition.addScaledVector(moveDirection, moveSpeedRef.current * speedMultiplier);
+        
+        // Move the camera
+        const cameraPosition = camera.position.clone();
+        cameraPosition.addScaledVector(moveDirection, moveSpeedRef.current * speedMultiplier);
+        
+        // Update controls
+        controls.target.copy(targetPosition);
+        camera.position.copy(cameraPosition);
+        controls.update();
+        
+        // Update raycaster to update preview block position
+        if (previewRef.current) {
+          playerPositionRef.current.copy(targetPosition);
+          
+          // Trigger a mouse move event to update preview position
+          if (rendererRef.current) {
+            const canvas = rendererRef.current.domElement;
+            const rect = canvas.getBoundingClientRect();
+            const centerX = rect.left + rect.width / 2;
+            const centerY = rect.top + rect.height / 2;
+            
+            // Create a fake mouse event to update the raycaster
+            const fakeEvent = new MouseEvent('mousemove', {
+              clientX: centerX,
+              clientY: centerY,
+              bubbles: true
+            });
+            
+            canvas.dispatchEvent(fakeEvent);
+          }
+        }
+      }
+    }
+    
+    // Animation frame for movement
+    const movementAnimationId = setInterval(processMovement, 16); // ~60fps
+    
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+      clearInterval(movementAnimationId);
+    };
+  }, []);
+
+  // Modify event handlers for mouse interactions to include WASD movement
   useEffect(() => {
     if (
       !mountRef.current ||
@@ -603,10 +1015,11 @@ function MinecraftBuilder() {
       // Reset hovered block reference
       hoveredBlockRef.current = null;
 
-      // Filter out preview box and non-placeable objects
+      // Filter out preview box, other player previews, and non-placeable objects
       const objectsToCheck = scene.children.filter((obj) => {
         return (
           obj !== previewBox &&
+          !obj.userData.playerName && // Exclude player wireframes
           (obj.userData.isBase === true || obj.userData.isBlock === true)
         );
       });
@@ -805,13 +1218,7 @@ function MinecraftBuilder() {
       document.removeEventListener("contextmenu", handleContextMenu);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [
-    blocks,
-    selectedColor,
-    selectedBlockType,
-    blockMaterialsCache,
-    isCollaborative,
-  ]);
+  }, [blocks, selectedColor, selectedBlockType, blockMaterialsCache, isCollaborative]);
 
   // Handle saving a new block definition
   function handleSaveBlockDefinition(newBlock: IBlockDefinition) {
@@ -843,6 +1250,15 @@ function MinecraftBuilder() {
 
   // Combine built-in and custom block types for the UI
   const allBlockTypes = [...BLOCK_ARRAY, ...customBlocks];
+
+  // Clean up labels on unmount
+  useEffect(() => {
+    return () => {
+      if (labelContainerRef.current && mountRef.current) {
+        mountRef.current.removeChild(labelContainerRef.current);
+      }
+    };
+  }, []);
 
   return (
     <div className="relative w-full h-screen">
@@ -897,6 +1313,27 @@ function MinecraftBuilder() {
         </div>
       )}
 
+      {/* Connected Players List */}
+      {showPlayersList && (
+        <div className="absolute top-20 left-4 bg-slate-800 p-3 rounded-lg shadow-lg z-50">
+          <h3 className="text-white font-medium mb-2">Connected Players ({connectedPlayers.length + 1})</h3>
+          <ul className="text-slate-300">
+            <li className="flex items-center mb-1">
+              <span className="w-3 h-3 bg-green-500 rounded-full mr-2"></span>
+              {userName} (You)
+            </li>
+            {connectedPlayers.map(player => (
+              <li key={player.name} className="flex items-center mb-1">
+                <span className="w-3 h-3 rounded-full mr-2" style={{
+                  backgroundColor: `hsl(${Math.abs(player.name.split('').reduce((a, b) => a + b.charCodeAt(0), 0) % 100) * 3.6}, 80%, 50%)`
+                }}></span>
+                {player.name}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* Controls */}
       <div className="absolute top-4 left-4 flex space-x-2 flex-wrap gap-2">
         <button
@@ -930,12 +1367,16 @@ function MinecraftBuilder() {
         )}
 
         <div className="px-3 py-1 bg-slate-700 text-white rounded-md text-sm">
-          Right-click: Place block • Z key: Delete block
+          WASD: Move • Right-click: Place block • Z key: Delete block
         </div>
 
         {isCollaborative && (
-          <div className="px-3 py-1 bg-purple-600 text-white rounded-md text-sm">
-            Room: {roomId} • {blocks.length} blocks
+          <div 
+            className="px-3 py-1 bg-purple-600 text-white rounded-md text-sm cursor-pointer relative"
+            onMouseEnter={() => setShowPlayersList(true)}
+            onMouseLeave={() => setShowPlayersList(false)}
+          >
+            Room: {roomId} • {blocks.length} blocks • {connectedPlayers.length + 1} players
           </div>
         )}
       </div>
