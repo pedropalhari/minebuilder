@@ -19,76 +19,16 @@ export interface IBlockDefinition {
 
 // Define common Minecraft block types
 export const BLOCK_TYPES: { [key: string]: IBlockDefinition } = {
-  GRASS: {
-    id: "grass",
-    name: "Grass Block",
+  STONE_BRICK: {
+    id: "stone_brick",
+    name: "Stone Brick",
     faces: {
-      top: 10, // Grass top texture (index 0 in atlas)
-      bottom: 10, // Dirt texture (index 2 in atlas)
-      front: 10, // Grass side texture (index 1 in atlas)
-      back: 10, // Grass side texture
-      left: 10, // Grass side texture
-      right: 10, // Grass side texture
-    },
-  },
-  DIRT: {
-    id: "dirt",
-    name: "Dirt",
-    faces: {
-      top: 2,
-      bottom: 2,
-      front: 2,
-      back: 2,
-      left: 2,
-      right: 2,
-    },
-  },
-  STONE: {
-    id: "stone",
-    name: "Stone",
-    faces: {
-      top: 576,
-      bottom: 576,
-      front: 576,
-      back: 576,
-      left: 576,
-      right: 576,
-    },
-  },
-  WOOD: {
-    id: "wood",
-    name: "Oak Wood",
-    faces: {
-      top: 4,
-      bottom: 4,
-      front: 5,
-      back: 5,
-      left: 5,
-      right: 5,
-    },
-  },
-  COBBLESTONE: {
-    id: "cobblestone",
-    name: "Cobblestone",
-    faces: {
-      top: 6,
-      bottom: 6,
-      front: 6,
-      back: 6,
-      left: 6,
-      right: 6,
-    },
-  },
-  SAND: {
-    id: "sand",
-    name: "Sand",
-    faces: {
-      top: 7,
-      bottom: 7,
-      front: 7,
-      back: 7,
-      left: 7,
-      right: 7,
+      top: 212,
+      bottom: 212,
+      front: 212,
+      back: 212,
+      left: 212,
+      right: 212,
     },
   },
   WOOD_BLOCK: {
@@ -102,6 +42,66 @@ export const BLOCK_TYPES: { [key: string]: IBlockDefinition } = {
       left: 1157,
       right: 1157,
     },
+  },
+  TNT: {
+    id: "tnt",
+    name: "TNT Block",
+    faces: {
+      top: 1794,
+      bottom: 1792,
+      front: 1793,
+      back: 1793,
+      left: 1793,
+      right: 1793,
+    },
+  },
+  PLANK_BLOCK: {
+    id: "plank_block",
+    name: "Plank Block",
+    faces: {
+      top: 1667,
+      bottom: 1667,
+      front: 1667,
+      back: 1667,
+      left: 1667,
+      right: 1667,
+    },
+  },
+  BRICK_BLOCK: {
+    id: "brick_block",
+    name: "Brick Block",
+    faces: {
+      top: 585,
+      bottom: 585,
+      front: 585,
+      back: 585,
+      left: 585,
+      right: 585,
+    },
+  },
+  BLACK_WOOL_BLOCK: {
+    id: "black_wool_block",
+    name: "Black Wool Block",
+    faces: {
+      top: 399,
+      bottom: 399,
+      front: 399,
+      back: 399,
+      left: 399,
+      right: 399
+    }
+  },
+  GRASS_BLOCK: {
+    id: "grass_block",
+    name: "Grass Block",
+    faces: {
+      top: 1099,
+      bottom: 907,
+      front: 537,
+      back: 537,
+      left: 537,
+      right: 537
+    }
   },
 };
 
